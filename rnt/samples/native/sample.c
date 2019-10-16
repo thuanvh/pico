@@ -7,9 +7,10 @@
 
 // OpenCV 3.x required
 // depending on your computer configuration (OpenCV install path), the following line might need modifications
-#include <opencv2/imgproc.hpp>
-#include <opencv2/highgui/highgui_c.h>
+#include <opencv2/opencv.hpp>
 
+
+using namespace cv;
 //
 #include "../../picornt.h"
 
@@ -70,7 +71,7 @@ int usepyr;
 int noclustering;
 int verbose;
 
-void process_image(IplImage* frame, int draw)
+void process_image(cv::Mat frame, int draw)
 {
 	int i, j;
 	float t;
@@ -82,32 +83,32 @@ void process_image(IplImage* frame, int draw)
 	int ndetections;
 	float rcsq[4*MAXNDETECTIONS];
 
-	static IplImage* gray = 0;
-	static IplImage* pyr[5] = {0, 0, 0, 0, 0};
+	static cv::Mat gray;
+	static std::vector<cv::Mat> pyr(5);
 
 	/*
 		...
 	*/
 
 	//
-	if(!pyr[0])
+	if(pyr[0].data != NULL)
 	{
 		//
-		gray = cvCreateImage(cvSize(frame->width, frame->height), frame->depth, 1);
+		gray = cv::Mat(Size(frame.cols, frame.rows), frame.depth(), 1);
 
 		//
 		pyr[0] = gray;
-		pyr[1] = cvCreateImage(cvSize(frame->width/2, frame->height/2), frame->depth, 1);
-		pyr[2] = cvCreateImage(cvSize(frame->width/4, frame->height/4), frame->depth, 1);
-		pyr[3] = cvCreateImage(cvSize(frame->width/8, frame->height/8), frame->depth, 1);
-		pyr[4] = cvCreateImage(cvSize(frame->width/16, frame->height/16), frame->depth, 1);
+		pyr[1] = cv::Mat(Size(frame.cols/2, frame.rows/2), frame.depth(), 1);
+		pyr[2] = cv::Mat(Size(frame.cols/4, frame.rows/4), frame.depth(), 1);
+		pyr[3] = cv::Mat(Size(frame.cols/8, frame.rows/8), frame.depth(), 1);
+		pyr[4] = cv::Mat(Size(frame.cols/16, frame.rows/16), frame.depth(), 1);
 	}
 
 	// get grayscale image
-	if(frame->nChannels == 3)
-		cvCvtColor(frame, gray, CV_RGB2GRAY);
+	if(frame.channels() == 3)
+		cvtColor(frame, gray, COLOR_RGB2GRAY);
 	else
-		cvCopy(frame, gray, 0);
+		gray = frame.clone();
 
 	// perform detection with the pico library
 	t = getticks();
@@ -119,21 +120,21 @@ void process_image(IplImage* frame, int draw)
 		//
 		pyr[0] = gray;
 
-		pixels = (uint8_t*)pyr[0]->imageData;
-		nrows = pyr[0]->height;
-		ncols = pyr[0]->width;
-		ldim = pyr[0]->widthStep;
+		pixels = (uint8_t*)pyr[0].data;
+		nrows = pyr[0].rows;
+		ncols = pyr[0].cols;
+		ldim = pyr[0].step;
 
 		ndetections = find_objects(rcsq, MAXNDETECTIONS, cascade, angle, pixels, nrows, ncols, ldim, scalefactor, stridefactor, MAX(16, minsize), MIN(128, maxsize));
 
 		for(i=1; i<5; ++i)
 		{
-			cvResize(pyr[i-1], pyr[i], CV_INTER_LINEAR);
+			resize(pyr[i-1], pyr[i], pyr[i].size(), INTER_LINEAR);
 
-			pixels = (uint8_t*)pyr[i]->imageData;
-			nrows = pyr[i]->height;
-			ncols = pyr[i]->width;
-			ldim = pyr[i]->widthStep;
+			pixels = (uint8_t*)pyr[i].data;
+			nrows = pyr[i].rows;
+			ncols = pyr[i].cols;
+			ldim = pyr[i].step;
 
 			nd = find_objects(&rcsq[4*ndetections], MAXNDETECTIONS-ndetections, cascade, angle, pixels, nrows, ncols, ldim, scalefactor, stridefactor, MAX(64, minsize>>i), MIN(128, maxsize>>i));
 
@@ -150,10 +151,10 @@ void process_image(IplImage* frame, int draw)
 	else
 	{
 		//
-		pixels = (uint8_t*)gray->imageData;
-		nrows = gray->height;
-		ncols = gray->width;
-		ldim = gray->widthStep;
+		pixels = (uint8_t*)gray.data;
+		nrows = gray.rows;
+		ncols = gray.cols;
+		ldim = gray.step;
 
 		//
 		ndetections = find_objects(rcsq, MAXNDETECTIONS, cascade, angle, pixels, nrows, ncols, ldim, scalefactor, stridefactor, minsize, MIN(nrows, ncols));
@@ -168,7 +169,7 @@ void process_image(IplImage* frame, int draw)
 	if(draw)
 		for(i=0; i<ndetections; ++i)
 			if(rcsq[4*i+3]>=qthreshold) // check the confidence threshold
-				cvCircle(frame, cvPoint(rcsq[4*i+1], rcsq[4*i+0]), rcsq[4*i+2]/2, CV_RGB(255, 0, 0), 2, 8, 0); // we draw circles here since height-to-width ratio of the detected face regions is 1.0f
+				circle(frame, Point(rcsq[4*i+1], rcsq[4*i+0]), rcsq[4*i+2]/2, CV_RGB(255, 0, 0), 2, 8, 0); // we draw circles here since height-to-width ratio of the detected face regions is 1.0f
 
 	// if the `verbose` flag is set, print the results to standard output
 	if(verbose)
@@ -185,20 +186,17 @@ void process_image(IplImage* frame, int draw)
 
 void process_webcam_frames()
 {
-	CvCapture* capture;
+	VideoCapture capture;
 
-	IplImage* frame;
-	IplImage* framecopy;
+	Mat frame;
+	Mat framecopy;
 
 	int stop;
 
 	const char* windowname = "--------------------";
 
 	//
-	capture = cvCaptureFromCAM(0);
-
-	if(!capture)
-	{
+	if(!capture.open(0)){
 		printf("# cannot initialize video capture ...\n");
 		return;
 	}
@@ -210,43 +208,36 @@ void process_webcam_frames()
 	while(!stop)
 	{
 		// wait 5 miliseconds
-		int key = cvWaitKey(5);
+		int key = waitKey(5);
 
-		// get the frame from webcam
-		if(!cvGrabFrame(capture))
-		{
-			stop = 1;
-			frame = 0;
-		}
-		else
-			frame = cvRetrieveFrame(capture, 1);
+		capture >> frame;
+
+		if( frame.empty() ) 
+			break; // end of video stream
 
 		// we terminate the loop if the user has pressed 'q'
-		if(!frame || key=='q')
+		if(key=='q')
 			stop = 1;
 		else
 		{
-			// we mustn't tamper with internal OpenCV buffers
-			if(!framecopy)
-				framecopy = cvCreateImage(cvSize(frame->width, frame->height), frame->depth, frame->nChannels);
-			cvCopy(frame, framecopy, 0);
+			framecopy = frame.clone();
 
 			// webcam outputs mirrored frames (at least on my machines)
 			// you can safely comment out this line if you find it unnecessary
-			cvFlip(framecopy, framecopy, 1);
+			flip(framecopy, framecopy, 1);
 
 			// ...
 			process_image(framecopy, 1);
 
 			// ...
-			cvShowImage(windowname, framecopy);
+			imshow(windowname, framecopy);
 		}
 	}
 
 	// cleanup
-	cvReleaseImage(&framecopy);
-	cvReleaseCapture(&capture);
-	cvDestroyWindow(windowname);
+	//releaseImage(&framecopy);
+	//releaseCapture(&capture);
+	//destroyWindow(windowname);
 }
 
 int main(int argc, char* argv[])
@@ -508,11 +499,11 @@ int main(int argc, char* argv[])
 		process_webcam_frames();
 	else
 	{
-		IplImage* img;
+		Mat img;
 
 		//
-		img = cvLoadImage(input, CV_LOAD_IMAGE_COLOR);
-		if(!img)
+		img = imread(input);
+		if(!img.data)
 		{
 			printf("# cannot load image from '%s'\n", argv[3]);
 			return 1;
@@ -522,15 +513,15 @@ int main(int argc, char* argv[])
 
 		//
 		if(0!=output[0])
-			cvSaveImage(output, img, 0);
+			imwrite(output, img);
 		else if(!verbose)
 		{
-			cvShowImage(input, img);
-			cvWaitKey(0);
+			imshow(input, img);
+			waitKey(0);
 		}
 
 		//
-		cvReleaseImage(&img);
+		//releaseImage(&img);
 	}
 
 	return 0;
